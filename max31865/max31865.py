@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-`adafruit_max31865`
+`max31865`
 ====================================================
 
 CircuitPython module for the MAX31865 platinum RTD temperature sensor.  See
@@ -24,23 +24,14 @@ Implementation Notes
 
 * Adafruit `PT1000 RTD Temperature Sensor Amplifier - MAX31865
   <https://www.adafruit.com/product/3648>`_ (Product ID: 3648)
-
-**Software and Dependencies:**
-
-* Adafruit CircuitPython firmware for the supported boards:
-  https://circuitpython.org/downloads
-
-* Adafruit's Bus Device library: https://github.com/adafruit/Adafruit_CircuitPython_BusDevice
 """
 import math
 import time
 
 from micropython import const
 
-from adafruit_bus_device import spi_device
-
 __version__ = "0.0.0+auto.0"
-__repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_MAX31865.git"
+__repo__ = "https://github.com/submer-crypto/MicroPython-MAX31865.git"
 
 # Register and other constant values:
 _MAX31865_CONFIG_REG = const(0x00)
@@ -73,13 +64,12 @@ _RTD_B = -5.775e-7
 class MAX31865:
     """Driver for the MAX31865 thermocouple amplifier.
 
-    :param ~busio.SPI spi: SPI device
-    :param ~digitalio.DigitalInOut cs: Chip Select
+    :param ~machine.SPI spi: SPI device
+    :param ~machine.Pin cs: Chip Select
     :param int rtd_nominal: RTD nominal value. Defaults to :const:`100`
     :param int ref_resistor: Reference resistance. Defaults to :const:`430.0`
     :param int wires: Number of wires. Defaults to :const:`2`
     :param int filter_frequency: . Filter frequency. Default to :const:`60`
-    :param int polarity: set to 1 if controller clock idles high. Default 0.
 
 
     **Quickstart: Importing and using the MAX31865**
@@ -89,17 +79,17 @@ class MAX31865:
 
         .. code-block:: python
 
-            import board
-            from digitalio import DigitalInOut, Direction
-            import adafruit_max31865
+            import time
+            from machine import Pin, SPI
+            import max31865
 
-        Once this is done you can define your `board.SPI` object and define your sensor object
+        Once this is done you can define your `machine.SPI` object and define your sensor object
 
         .. code-block:: python
 
-            spi = board.SPI()
-            cs = digitalio.DigitalInOut(board.D5)  # Chip select of the MAX31865 board.
-            sensor = adafruit_max31865.MAX31865(spi, cs)
+            spi = SPI(0, 500000, phase=1, sck=Pin(18), mosi=Pin(19), miso=Pin(16))
+            cs = Pin(17, Pin.OUT, value=1)  # Chip select of the MAX31865 board.
+            sensor = max31865.MAX31865(spi, cs)
 
 
         Now you have access to the :attr:`temperature` attribute
@@ -114,14 +104,14 @@ class MAX31865:
     # Class-level buffer for reading and writing data with the sensor.
     # This reduces memory allocations but means the code is not re-entrant or
     # thread safe!
-    _BUFFER = bytearray(3)
+    _BUFFER_8 = bytearray(1)
+    _BUFFER_16 = bytearray(2)
 
     def __init__(
         self,
         spi,
         cs,  # pylint: disable=invalid-name
         *,
-        polarity=0,
         rtd_nominal=100,
         ref_resistor=430.0,
         wires=2,
@@ -129,9 +119,9 @@ class MAX31865:
     ):
         self.rtd_nominal = rtd_nominal
         self.ref_resistor = ref_resistor
-        self._device = spi_device.SPIDevice(
-            spi, cs, baudrate=500000, polarity=polarity, phase=1
-        )
+        self._device = spi
+        self._cs = cs
+
         # Set 50Hz or 60Hz filter.
         if filter_frequency not in (50, 60):
             raise ValueError("Filter_frequency must be a value of 50 or 60!")
@@ -157,26 +147,35 @@ class MAX31865:
     # pylint: disable=no-member
     def _read_u8(self, address):
         # Read an 8-bit unsigned value from the specified 8-bit address.
-        with self._device as device:
-            self._BUFFER[0] = address & 0x7F
-            device.write(self._BUFFER, end=1)
-            device.readinto(self._BUFFER, end=1)
-        return self._BUFFER[0]
+        try:
+            self._cs.low()
+            self._BUFFER_8[0] = address & 0x7F
+            self._device.write(self._BUFFER_8)
+            self._device.readinto(self._BUFFER_8)
+            return self._BUFFER_8[0]
+        finally:
+            self._cs.high()
 
     def _read_u16(self, address):
         # Read a 16-bit BE unsigned value from the specified 8-bit address.
-        with self._device as device:
-            self._BUFFER[0] = address & 0x7F
-            device.write(self._BUFFER, end=1)
-            device.readinto(self._BUFFER, end=2)
-        return (self._BUFFER[0] << 8) | self._BUFFER[1]
+        try:
+            self._cs.low()
+            self._BUFFER_8[0] = address & 0x7F
+            self._device.write(self._BUFFER_8)
+            self._device.readinto(self._BUFFER_16)
+            return (self._BUFFER_16[0] << 8) | self._BUFFER_16[1]
+        finally:
+            self._cs.high()
 
     def _write_u8(self, address, val):
         # Write an 8-bit unsigned value to the specified 8-bit address.
-        with self._device as device:
-            self._BUFFER[0] = (address | 0x80) & 0xFF
-            self._BUFFER[1] = val & 0xFF
-            device.write(self._BUFFER, end=2)
+        try:
+            self._cs.low()
+            self._BUFFER_16[0] = (address | 0x80) & 0xFF
+            self._BUFFER_16[1] = val & 0xFF
+            self._device.write(self._BUFFER_16)
+        finally:
+            self._cs.high()
 
     # pylint: enable=no-member
 
